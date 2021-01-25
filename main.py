@@ -2,6 +2,7 @@ import os
 
 import requests
 from bs4 import BeautifulSoup
+import saveManager
 
 HEADERS_GET = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36'}
@@ -86,14 +87,16 @@ def user_games_rating():
 
 
 def manager():
-    todo = ''
-    while todo != 'exit':
+    manager_msg = "\n" * 100 + """\t\tNice! now that we all set up we can choose what you want to do! you can do 
+            couple of things like 'score more games' , 'recommended games' , 'exit' and 'delete' to delete your 
+            preferences and then exit\n\n\n\n """
+    print(manager_msg)
 
-        manager_msg = "\n" * 100 + """\t\tNice! now that we all set up we can choose what you want to do!
-        you can do couple of things like 'score more games' , 'recommended games' and 'exit\n\n\n\n
-        """
-        print(manager_msg)
-        todo = input("what do you want to do?")
+    todo = ''
+    dont_write = False
+
+    while todo != 'exit':
+        todo = input("what do you want to do? ")
 
         if todo == "score more games":
             user_games_rating()
@@ -101,18 +104,43 @@ def manager():
         elif todo == "recommended games":
             print(prog_scores)
 
+        elif todo == "delete":
+            if os.path.exists(saveManager.data):
+                os.remove(saveManager.data)
+            dont_write = True
+            break
+        print(
+            "\n\n\t\tyour options are: 'score more games' , 'recommended games' , 'exit' and 'delete' to delete your "
+            "preferences and then exit\n\n\n\n ")
+
+    if not dont_write:
+        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
+                          games=games)
+
 
 def main():
+    global user_scores
+    global prog_scores
+    global got_peoples_score
+    global games
     start_msg = """\tHello, This Program will help find whats your next game will be.
     you just have to answer some questions about some games, and I will calculate whats your next game should be
     Just know that the more questions you answer, the more accurate my calculation will be
     """
     print(start_msg)
-    get_default_games()
-    user_games_rating()
+    data = saveManager.read()
+
+    if data is None:
+        get_default_games()
+        user_games_rating()
+
+    else:
+        user_scores = data['user_scores']
+        prog_scores = data['prog_scores']
+        got_peoples_score = data['got_peoples_score']
+        games = data['games']
+
     manager()
-    # platform = most_viewed_platform("watch dogs: legion")
-    # print(platform)
 
 
 if __name__ == '__main__':
