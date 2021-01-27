@@ -13,6 +13,17 @@ got_peoples_score = []
 games = []
 
 
+def assign_from_json(data):
+    global user_scores
+    global prog_scores
+    global got_peoples_score
+    global games
+    user_scores = data['user_scores']
+    prog_scores = data['prog_scores']
+    got_peoples_score = data['got_peoples_score']
+    games = data['games']
+
+
 def get_default_games():
     global games
     req = requests.get("https://www.metacritic.com/browse/games/score/metascore/all/all/filtered", headers=HEADERS_GET)
@@ -29,13 +40,13 @@ def real_most_viewed_platform(urls: []) -> str:
     for url in urls:
         req = requests.get(url, headers=HEADERS_GET)
         soup = BeautifulSoup(req.text, 'html.parser')
-        sumReviews = soup.find_all(attrs={'class': 'count'})[1]
-        sumReviews = str(sumReviews).split('user-reviews">')[1].split("Ratings")[0]
-        reviews.append((sumReviews, url))
+        sum_reviews = soup.find_all(attrs={'class': 'count'})[1]
+        sum_reviews = str(sum_reviews).split('user-reviews">')[1].split("Ratings")[0]
+        reviews.append((url, sum_reviews))
 
-    reviews.sort(key=lambda x: -int(x[0]))
-    print(reviews)
-    return reviews[0][1]
+    reviews.sort(key=lambda x: -int(x[1]))
+    # print(reviews)
+    return reviews[0][0]
 
 
 def most_viewed_platform(game: str) -> str:
@@ -49,21 +60,50 @@ def most_viewed_platform(game: str) -> str:
         n = True
         if 'href="/game/' in i and "div" not in i and 'section' not in i:
             url = i.split('<a href="')[1].split('">')[0]
-            for word in url.split('/')[3].replace("-", ' '):
-                if word not in game:
+            for word in url.split('/')[3].replace("-", ' ').lower():
+                if word not in game.lower():
                     n = False
-            if n is False:
-                continue
-            urls.append('https://www.metacritic.com' + url)
-    print(urls)
+                    break
+            if n:
+                urls.append('https://www.metacritic.com' + url)
+    # print(urls)
     return real_most_viewed_platform(urls)
 
 
-def get_rating_from_people():
+def get_reviewers_to_check():
+    url_of_reviewers = []
     for game in user_scores:
         if game not in got_peoples_score:
             got_peoples_score.append(game)
-            url = most_viewed_platform(game)
+            origin_url = most_viewed_platform(game) + r"/user-reviews?sort-by=most-helpful&num_items=100"
+            url = origin_url
+            print(url)
+            reviewers_count = 0
+            page = 0
+            while reviewers_count < 20:
+                req = requests.get(url, headers=HEADERS_GET)
+                soup = BeautifulSoup(req.text, 'html.parser')
+                reviews = soup.find_all(attrs={'class': 'review user_review'})
+                for review in reviews:
+                    grade = BeautifulSoup(str(review), 'html.parser').find(attrs={'class': 'review_grade'}).text
+                    if abs(int(user_scores[game]) * 2 - int(grade)) < 2:
+                        reviewer_link = [str(i) for i in
+                                         BeautifulSoup(str(review), 'html.parser').find_all(href=True, name='a')]
+                        real_link = None
+                        for link in reviewer_link:
+                            if "/user/" in link:
+                                real_link = link.split('"')[1].split('"')[0]
+                                break
+                        if real_link:
+                            reviewers_count += 1
+                            url_of_reviewers.append(f"https://www.metacritic.com/{real_link}")
+                page += 1
+                url = origin_url + f'&page={page}'
+    return url_of_reviewers
+
+
+def prog_games_rating():
+    reviewers_urls = get_reviewers_to_check()
 
 
 def user_games_rating():
@@ -103,6 +143,7 @@ def manager():
 
         elif todo == "recommended games":
             print(prog_scores)
+            input("continue? press Enter")
 
         elif todo == "delete":
             if os.path.exists(saveManager.data):
@@ -110,8 +151,8 @@ def manager():
             dont_write = True
             break
         print(
-            "\n\n\t\tyour options are: 'score more games' , 'recommended games' , 'exit' and 'delete' to delete your "
-            "preferences and then exit\n\n\n\n ")
+            "\n" * 100 + "\t\tyour options are: 'score more games' , 'recommended games' , 'exit' and 'delete' to "
+                         "delete your preferences and then exit\n\n\n\n ")
 
     if not dont_write:
         saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
@@ -119,10 +160,6 @@ def manager():
 
 
 def main():
-    global user_scores
-    global prog_scores
-    global got_peoples_score
-    global games
     start_msg = """\tHello, This Program will help find whats your next game will be.
     you just have to answer some questions about some games, and I will calculate whats your next game should be
     Just know that the more questions you answer, the more accurate my calculation will be
@@ -135,10 +172,12 @@ def main():
         user_games_rating()
 
     else:
-        user_scores = data['user_scores']
-        prog_scores = data['prog_scores']
-        got_peoples_score = data['got_peoples_score']
-        games = data['games']
+        try:
+            assign_from_json(data)
+        except Exception as e:
+            print(f"there was a problem with reading the saved data... sorry about that. plz start over. e:{e}")
+            get_default_games()
+            user_games_rating()
 
     manager()
 
