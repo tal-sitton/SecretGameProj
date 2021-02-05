@@ -11,17 +11,16 @@ user_scores = {}
 prog_scores = {}
 got_peoples_score = []
 games = []
+calculated = False
 
 
 def assign_from_json(data):
-    global user_scores
-    global prog_scores
-    global got_peoples_score
-    global games
+    global user_scores, prog_scores, got_peoples_score, games, calculated
     user_scores = data['user_scores']
     prog_scores = data['prog_scores']
     got_peoples_score = data['got_peoples_score']
     games = data['games']
+    calculated = data['calculated']
 
 
 def get_default_games():
@@ -78,13 +77,14 @@ def get_reviewers_to_check():
             got_peoples_score.append(game)
             origin_url = most_viewed_platform(game) + r"/user-reviews?sort-by=most-helpful&num_items=100"
             url = origin_url
-            print(url)
             reviewers_count = 0
             page = 0
-            while reviewers_count < 20 and page / 2 < 10:
-                req = session.get(url, headers=HEADERS_GET)
-                soup = BeautifulSoup(req.text, 'html.parser')
-                reviews = soup.find_all(attrs={'class': 'review user_review'})
+
+            req = session.get(url, headers=HEADERS_GET)
+            soup = BeautifulSoup(req.text, 'html.parser')
+            reviews = soup.find_all(attrs={'class': 'review user_review'})
+
+            while reviewers_count < 10 and page / 2 < 10 and reviews is not None:
                 for review in reviews:
                     grade = BeautifulSoup(str(review), 'html.parser').find(attrs={'class': 'review_grade'}).text
                     if abs(int(user_scores[game]) * 2 - int(grade)) < 2:
@@ -101,13 +101,17 @@ def get_reviewers_to_check():
                                 f"https://www.metacritic.com/{real_link}?myscore-filter=Game&myreview-sort=score")
                 page += 2
                 url = origin_url + f'&page={page}'
+
+                req = session.get(url, headers=HEADERS_GET)
+                soup = BeautifulSoup(req.text, 'html.parser')
+                reviews = soup.find_all(attrs={'class': 'review user_review'})
     session.close()
     return url_of_reviewers
 
 
 def prog_games_rating():
+    global calculated
     reviewers_urls = get_reviewers_to_check()
-    print(reviewers_urls)
     session = requests.Session()
     for i, reviewer in enumerate(reviewers_urls):
         print(str(i + 1) + "/" + str(len(reviewers_urls)))
@@ -126,6 +130,7 @@ def prog_games_rating():
 
     session.close()
     clear_things()
+    calculated = True
 
 
 def clear_things():
@@ -139,7 +144,7 @@ def clear_things():
 
 
 def user_games_rating():
-    global user_scores
+    global user_scores, calculated
     done = 0
     for game in games:
         rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play) ")
@@ -155,7 +160,7 @@ def user_games_rating():
         games.remove(game)
         if done == 5:
             break
-    print(user_scores)
+    calculated = False
 
 
 def manager():
@@ -168,17 +173,14 @@ def manager():
     dont_write = False
 
     while todo != 'exit':
-        print(games)
-        print(len(games))
         todo = input("what do you want to do? ")
-
-        if todo == 'e':
-            prog_games_rating()
 
         if todo == "score more games":
             user_games_rating()
 
         elif todo == "recommended games":
+            if not calculated:
+                prog_games_rating()
             print(prog_scores)
             input("continue? press Enter")
 
@@ -193,7 +195,7 @@ def manager():
 
     if not dont_write:
         saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
-                          games=games)
+                          games=games, calculated=calculated)
 
 
 def main():
@@ -212,7 +214,8 @@ def main():
         try:
             assign_from_json(data)
         except Exception as e:
-            print(f"there was a problem with reading the saved data... sorry about that. plz start over. e:{e}")
+            print(f"There was a PROBLEM with reading the saved data... sorry about that. plz start over. ERROR= {type(e)} : {e}")
+            os.remove(saveManager.data)
             get_default_games()
             user_games_rating()
 
