@@ -71,6 +71,7 @@ def most_viewed_platform(game: str) -> str:
 
 
 def get_reviewers_to_check():
+    session = requests.Session()
     url_of_reviewers = []
     for game in user_scores:
         if game not in got_peoples_score:
@@ -80,8 +81,8 @@ def get_reviewers_to_check():
             print(url)
             reviewers_count = 0
             page = 0
-            while reviewers_count < 20:
-                req = requests.get(url, headers=HEADERS_GET)
+            while reviewers_count < 20 and page / 2 < 10:
+                req = session.get(url, headers=HEADERS_GET)
                 soup = BeautifulSoup(req.text, 'html.parser')
                 reviews = soup.find_all(attrs={'class': 'review user_review'})
                 for review in reviews:
@@ -96,14 +97,45 @@ def get_reviewers_to_check():
                                 break
                         if real_link:
                             reviewers_count += 1
-                            url_of_reviewers.append(f"https://www.metacritic.com/{real_link}")
-                page += 1
+                            url_of_reviewers.append(
+                                f"https://www.metacritic.com/{real_link}?myscore-filter=Game&myreview-sort=score")
+                page += 2
                 url = origin_url + f'&page={page}'
+    session.close()
     return url_of_reviewers
 
 
 def prog_games_rating():
     reviewers_urls = get_reviewers_to_check()
+    print(reviewers_urls)
+    session = requests.Session()
+    for i, reviewer in enumerate(reviewers_urls):
+        print(str(i + 1) + "/" + str(len(reviewers_urls)))
+        url = session.get(reviewer, headers=HEADERS_GET).text
+        reviews = [str(i) for i in BeautifulSoup(url, 'html.parser').find_all(attrs={'class': 'review_stats'})]
+        for review in reviews:
+            grade = int(BeautifulSoup(review, 'html.parser').find(attrs={'class': 'review_score'}).text)
+            game_name = BeautifulSoup(review, 'html.parser').find(attrs={'class': 'product_title'}).text
+            if game_name not in games:
+                games.insert(0, game_name)
+            if grade >= 9:
+                if prog_scores.get(game_name):
+                    prog_scores[game_name] = prog_scores[game_name] + 1
+                else:
+                    prog_scores[game_name] = 1
+
+    session.close()
+    clear_things()
+
+
+def clear_things():
+    global prog_scores
+    for game in user_scores:
+        if game in prog_scores:
+            del prog_scores[game]
+        if game in games:
+            games.remove(game)
+    prog_scores = {k: v for k, v in sorted(prog_scores.items(), key=lambda item: -item[1])}
 
 
 def user_games_rating():
@@ -136,7 +168,12 @@ def manager():
     dont_write = False
 
     while todo != 'exit':
+        print(games)
+        print(len(games))
         todo = input("what do you want to do? ")
+
+        if todo == 'e':
+            prog_games_rating()
 
         if todo == "score more games":
             user_games_rating()
