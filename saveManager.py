@@ -1,7 +1,7 @@
 import json
 import os
 
-data = os.getcwd() + "\\data"
+data = os.getcwd() + "\\data.json"
 
 
 def write(**kwargs):

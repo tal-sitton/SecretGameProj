@@ -1,5 +1,8 @@
+import asyncio
 import os
+import time
 
+import aiohttp
 import requests
 from bs4 import BeautifulSoup
 import saveManager
@@ -34,22 +37,49 @@ def get_default_games():
     games += noDupGames
 
 
-def real_most_viewed_platform(urls: []) -> str:
-    reviews = []
-    for url in urls:
-        req = requests.get(url, headers=HEADERS_GET)
-        soup = BeautifulSoup(req.text, 'html.parser')
-        sum_reviews = soup.find_all(attrs={'class': 'count'})[1]
-        sum_reviews = str(sum_reviews).split('user-reviews">')[1].split("Ratings")[0]
-        reviews.append((url, sum_reviews))
+async def platform_data(session: aiohttp.client.ClientSession, platform_url: str):
+    async with session.get(platform_url, headers=HEADERS_GET) as response:
+        req = await response.text()
+
+    soup = BeautifulSoup(req, 'html.parser')
+    sum_reviews = soup.find_all(attrs={'class': 'count'})
+    try:
+        if "metascore_w user large game tbd" not in req:
+            sum_reviews = sum_reviews[1]
+            if len(str(sum_reviews).split('user-reviews">')) > 1:
+                sum_reviews = str(sum_reviews).split('user-reviews">')[1].split("Ratings")[0]
+                reviews.append((platform_url, sum_reviews))
+    except Exception as e:
+        print(platform_url, e)
+
+
+reviews = []
+
+
+async def most_viewed_platform(urls: []):
+    global platform
+    reviews.clear()
+    urls = urls[0:4]
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for url in urls:
+            task = asyncio.ensure_future(platform_data(session, url))
+            tasks.append(task)
+        await asyncio.gather(*tasks)
 
     reviews.sort(key=lambda x: -int(x[1]))
-    # print(reviews)
-    return reviews[0][0]
+    try:
+        platform = reviews[0][0]
+    except IndexError:
+        print("THE GAME DOESN'T HAVE ANY REVIEW IN ANY CONSOLE IN METACRITIC")
+        platform = None
 
 
-def most_viewed_platform(game: str) -> str:
-    req = requests.get(f'https://www.metacritic.com/search/game/{game}/results', headers=HEADERS_GET)
+platform = None
+
+
+async def get_platforms(game: str) -> str:
+    req = requests.get(f'https://www.metacritic.com/search/game/{game}/results?sort=relevancy', headers=HEADERS_GET)
     soup = BeautifulSoup(req.text, 'html.parser')
     consoles = soup.find_all(name='a', href=True)
     consoles = [str(con) for con in consoles]
@@ -65,17 +95,22 @@ def most_viewed_platform(game: str) -> str:
                     break
             if n:
                 urls.append('https://www.metacritic.com' + url)
-    # print(urls)
-    return real_most_viewed_platform(urls)
+    await most_viewed_platform(urls)
+    return platform
 
 
-def get_reviewers_to_check():
+async def get_reviewers_to_check():
     session = requests.Session()
     url_of_reviewers = []
     for game in user_scores:
         if game not in got_peoples_score:
+            print(f"checking {game}")
             got_peoples_score.append(game)
-            origin_url = most_viewed_platform(game) + r"/user-reviews?sort-by=most-helpful&num_items=100"
+            origin_url = await get_platforms(game)
+            if origin_url is None:
+                print(f"COULDN'T FIND {game} IN METACRITIC")
+                continue
+            origin_url += r"/user-reviews?sort-by=most-helpful&num_items=100"
             url = origin_url
             reviewers_count = 0
             page = 0
@@ -84,7 +119,7 @@ def get_reviewers_to_check():
             soup = BeautifulSoup(req.text, 'html.parser')
             reviews = soup.find_all(attrs={'class': 'review user_review'})
 
-            while reviewers_count < 10 and page / 2 < 10 and reviews is not None:
+            while reviewers_count < 10 and page / 2 < 10 and reviews:
                 for review in reviews:
                     grade = BeautifulSoup(str(review), 'html.parser').find(attrs={'class': 'review_grade'}).text
                     if abs(int(user_scores[game]) * 2 - int(grade)) < 2:
@@ -101,34 +136,57 @@ def get_reviewers_to_check():
                                 f"https://www.metacritic.com/{real_link}?myscore-filter=Game&myreview-sort=score")
                 page += 2
                 url = origin_url + f'&page={page}'
-
                 req = session.get(url, headers=HEADERS_GET)
                 soup = BeautifulSoup(req.text, 'html.parser')
                 reviews = soup.find_all(attrs={'class': 'review user_review'})
+            # print(reviewers_count)
+            # print(origin_url)
     session.close()
+    # print(url_of_reviewers)
+    # print(len(url_of_reviewers))
     return url_of_reviewers
 
 
-def prog_games_rating():
-    global calculated
-    reviewers_urls = get_reviewers_to_check()
-    session = requests.Session()
-    for i, reviewer in enumerate(reviewers_urls):
-        print(str(i + 1) + "/" + str(len(reviewers_urls)))
-        url = session.get(reviewer, headers=HEADERS_GET).text
-        reviews = [str(i) for i in BeautifulSoup(url, 'html.parser').find_all(attrs={'class': 'review_stats'})]
-        for review in reviews:
-            grade = int(BeautifulSoup(review, 'html.parser').find(attrs={'class': 'review_score'}).text)
-            game_name = BeautifulSoup(review, 'html.parser').find(attrs={'class': 'product_title'}).text
-            if game_name not in games:
-                games.insert(0, game_name)
-            if grade >= 9:
-                if prog_scores.get(game_name):
-                    prog_scores[game_name] = prog_scores[game_name] + 1
-                else:
-                    prog_scores[game_name] = 1
+index = 0
 
-    session.close()
+
+async def do_rating(session: aiohttp.client.ClientSession, reviewer: str, length: int):
+    global index
+    async with session.get(reviewer, headers=HEADERS_GET) as response:
+        html = await response.text()
+        reviews = [str(i) for i in BeautifulSoup(html, 'html.parser').find_all(attrs={'class': 'review_stats'})]
+    for review in reviews:
+        grade = int(BeautifulSoup(review, 'html.parser').find(attrs={'class': 'review_score'}).text)
+        game_name = BeautifulSoup(review, 'html.parser').find(attrs={'class': 'product_title'}).text
+        if game_name not in games:
+            games.insert(0, game_name)
+        if grade >= 9:
+            if prog_scores.get(game_name):
+                prog_scores[game_name] = prog_scores.get(game_name) + 1
+            else:
+                prog_scores[game_name] = 1
+        elif grade <= 2:
+            if prog_scores.get(game_name):
+                prog_scores[game_name] = prog_scores.get(game_name) - 1
+            else:
+                prog_scores[game_name] = -1
+    print(str(index + 1) + "/" + str(length))
+    index += 1
+
+
+async def prog_games_rating():
+    global index
+    global calculated
+    reviewers_urls = await get_reviewers_to_check()
+    index = 0
+
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for reviewer in reviewers_urls:
+            task = asyncio.ensure_future(do_rating(session, reviewer, len(reviewers_urls)))
+            tasks.append(task)
+        await asyncio.gather(*tasks)
+
     clear_things()
     calculated = True
 
@@ -170,7 +228,6 @@ def manager():
     print(manager_msg)
 
     todo = ''
-    dont_write = False
 
     while todo != 'exit':
         todo = input("what do you want to do? ")
@@ -180,22 +237,20 @@ def manager():
 
         elif todo == "recommended games":
             if not calculated:
-                prog_games_rating()
+                asyncio.get_event_loop().run_until_complete(prog_games_rating())
             print(prog_scores)
             input("continue? press Enter")
 
         elif todo == "delete":
             if os.path.exists(saveManager.data):
                 os.remove(saveManager.data)
-            dont_write = True
             break
+
+        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
+                          games=games, calculated=calculated)
         print(
             "\n" * 100 + "\t\tyour options are: 'score more games' , 'recommended games' , 'exit' and 'delete' to "
                          "delete your preferences and then exit\n\n\n\n ")
-
-    if not dont_write:
-        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
-                          games=games, calculated=calculated)
 
 
 def main():
@@ -209,15 +264,20 @@ def main():
     if data is None:
         get_default_games()
         user_games_rating()
+        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
+                          games=games, calculated=calculated)
 
     else:
         try:
             assign_from_json(data)
         except Exception as e:
-            print(f"There was a PROBLEM with reading the saved data... sorry about that. plz start over. ERROR= {type(e)} : {e}")
+            print(
+                f"There was a PROBLEM with reading the saved data... sorry about that. plz start over. ERROR= {type(e)} : {e}")
             os.remove(saveManager.data)
             get_default_games()
             user_games_rating()
+            saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
+                              games=games, calculated=calculated)
 
     manager()
 
