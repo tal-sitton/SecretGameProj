@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 
@@ -14,3 +15,13 @@ def read() -> dict:
         with open(data, 'r') as f:
             return json.loads(f.read())
     return None
+
+
+def to_csv(prog_scores: dict):
+    with open('names.csv', 'w', newline='') as csvfile:
+        fieldnames = ["name", "score"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        writer.writeheader()
+        for key in prog_scores.keys():
+            writer.writerow({"name": key, "score": prog_scores.get(key)})
