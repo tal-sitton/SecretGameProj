@@ -1,10 +1,10 @@
 import asyncio
 import os
-import sys
 
 import aiohttp
 import requests
 from bs4 import BeautifulSoup
+
 import saveManager
 
 HEADERS_GET = {
@@ -16,10 +16,14 @@ got_peoples_score = []
 games = []
 calculated = False
 
-NEEDED_REVIEWS = 10
+NEEDED_REVIEWS = 40
 
 
 def assign_from_json(data):
+    """
+    Assigns the data from jsom file to the variables
+    :param data: data from the json
+    """
     global user_scores, prog_scores, got_peoples_score, games, calculated
     user_scores = data['user_scores']
     prog_scores = data['prog_scores']
@@ -29,6 +33,9 @@ def assign_from_json(data):
 
 
 def get_default_games():
+    """
+    Gets the best games from Metacritic.com
+    """
     global games
     req = requests.get("https://www.metacritic.com/browse/games/score/metascore/all/all/filtered", headers=HEADERS_GET)
     soup = BeautifulSoup(req.text, 'html.parser')
@@ -40,6 +47,13 @@ def get_default_games():
 
 
 async def platform_data(session: aiohttp.client.ClientSession, platform_url: str):
+    """
+    search how many reviews a game has in a specific platform
+    :param session: the session used to make requests
+    :type session: aiohttp.client.ClientSession
+    :param platform_url: the url of the platform to check
+    :type platform_url: str
+    """
     async with session.get(platform_url, headers=HEADERS_GET) as response:
         req = await response.text()
 
@@ -58,13 +72,17 @@ async def platform_data(session: aiohttp.client.ClientSession, platform_url: str
 reviews = []
 
 
-async def most_viewed_platform(urls: []):
+async def most_viewed_platform(platforms_urls: []):
+    """
+    gets the most viewed platform from the given list
+    :param platforms_urls: all the platform of a specific game
+    """
     global platform
     reviews.clear()
-    urls = urls[0:4]
+    platforms_urls = platforms_urls[0:4]
     async with aiohttp.ClientSession() as session:
         tasks = []
-        for url in urls:
+        for url in platforms_urls:
             task = asyncio.ensure_future(platform_data(session, url))
             tasks.append(task)
         await asyncio.gather(*tasks)
@@ -80,7 +98,16 @@ async def most_viewed_platform(urls: []):
 platform = None
 
 
-async def get_platforms(game: str, non_specific: bool = False) -> str:
+async def get_platforms(game: str, non_specific: bool = False) -> list:
+    """
+    Gets all the platforms of the game
+    :param game: the name of the game
+    :type game: str
+    :param non_specific: whether the game could be not a perfect match to the given name
+    :type non_specific: bool
+    :return: the urls of the platforms
+    :rtype: list
+    """
     req = requests.get(f'https://www.metacritic.com/search/game/{game}/results?sort=relevancy', headers=HEADERS_GET)
     soup = BeautifulSoup(req.text, 'html.parser')
     consoles = soup.find_all(name='a', href=True)
@@ -101,8 +128,14 @@ async def get_platforms(game: str, non_specific: bool = False) -> str:
     return urls
 
 
-async def get_reviewers_to_check():
+async def get_reviewers_to_check() -> list:
+    """
+    Gets the reviewers to check and learn from
+    :return: all the reviewers the program has to check
+    :rtype: list
+    """
     session = requests.Session()
+    print("started get_reviewers_to_check")
     url_of_reviewers = []
     for game in user_scores:
         if game not in got_peoples_score:
@@ -121,10 +154,10 @@ async def get_reviewers_to_check():
             req = session.get(url, headers=HEADERS_GET)
             soup = BeautifulSoup(req.text, 'html.parser')
             reviews = soup.find_all(attrs={'class': 'review user_review'})
-            while reviewers_count < NEEDED_REVIEWS and page < 5 and reviews:
+            while reviewers_count < NEEDED_REVIEWS and page < 15 and reviews:
                 for review in reviews:
                     grade = BeautifulSoup(str(review), 'html.parser').find(attrs={'class': 'review_grade'}).text
-                    if abs(int(user_scores[game]) * 2 - int(grade)) < 2:
+                    if abs(int(user_scores[game]) * 2 - int(grade)) <= 2:
                         reviewer_link = [str(i) for i in
                                          BeautifulSoup(str(review), 'html.parser').find_all(href=True, name='a')]
                         real_link = None
@@ -142,18 +175,24 @@ async def get_reviewers_to_check():
                     req = session.get(url, headers=HEADERS_GET)
                     soup = BeautifulSoup(req.text, 'html.parser')
                     reviews = soup.find_all(attrs={'class': 'review user_review'})
-            # print(reviewers_count)
-            # print(origin_url)
+            print({game}, {reviewers_count}, {origin_url})
     session.close()
-    # print(url_of_reviewers)
-    # print(len(url_of_reviewers))
     return url_of_reviewers
 
 
 index = 0
 
 
-async def do_rating(session: aiohttp.client.ClientSession, reviewer: str, length: int):
+async def rate(session: aiohttp.client.ClientSession, reviewer: str, length: int):
+    """
+    Rates games based on a reviewer opinion of the game
+    :param session: the session used to make requests
+    :type session: aiohttp.client.ClientSession
+    :param reviewer: the reviewer the program needs to check
+    :type reviewer: str
+    :param length: how many reviewers there are in total
+    :type length: int
+    """
     global index
     async with session.get(reviewer, headers=HEADERS_GET) as response:
         html = await response.text()
@@ -178,6 +217,9 @@ async def do_rating(session: aiohttp.client.ClientSession, reviewer: str, length
 
 
 async def prog_games_rating():
+    """
+    Rates according to every single reviewer the program gathered
+    """
     global index
     global calculated
     reviewers_urls = await get_reviewers_to_check()
@@ -186,15 +228,18 @@ async def prog_games_rating():
     async with aiohttp.ClientSession() as session:
         tasks = []
         for reviewer in reviewers_urls:
-            task = asyncio.ensure_future(do_rating(session, reviewer, len(reviewers_urls)))
+            task = asyncio.ensure_future(rate(session, reviewer, len(reviewers_urls)))
             tasks.append(task)
         await asyncio.gather(*tasks)
 
-    clear_things()
+    clear_score()
     calculated = True
 
 
-def clear_things():
+def clear_score():
+    """
+    Clears and organize the lists
+    """
     global prog_scores
     for game in user_scores:
         if game in prog_scores:
@@ -205,6 +250,9 @@ def clear_things():
 
 
 def user_games_rating():
+    """
+    Manages all the user interaction: asking the user for his opinion about every game
+    """
     global user_scores, calculated
     done = 0
     for game in games:
@@ -222,10 +270,13 @@ def user_games_rating():
         if done == 5:
             break
     calculated = False
-    clear_things()
+    clear_score()
 
 
 def add_manually():
+    """
+    Adding a game manually - the user gives the name of the game and his rating
+    """
     global user_scores, calculated
     session = requests.Session()
     game = input("whats the name of the game? ENTER to main menu\n")
@@ -255,10 +306,13 @@ def add_manually():
             user_scores[name] = rating
             calculated = False
         game = input("whats the name of the game? ENTER to main menu\n")
-    clear_things()
+    clear_score()
 
 
 def manager():
+    """
+    Managing everything
+    """
     manager_msg = "\n" * 100 + "\t\tNice! now that we all set up we can choose what you want to do! you can do couple " \
                                "of things like:\n\t\t'score more games' , 'recommended games' , 'manual' to add games " \
                                "manually,\n\t\t'exit' , and " \
@@ -321,7 +375,6 @@ def main():
                               games=games, calculated=calculated)
 
     manager()
-    # saveManager.to_csv(prog_scores)
 
 
 if __name__ == '__main__':
