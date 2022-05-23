@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 
 import aiohttp
 import requests
@@ -9,6 +10,8 @@ import saveManager
 
 HEADERS_GET = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36'}
+
+reserved_utl_chars = ["!", "*" "(", ")", ";", ":", "@", "&", "=", "+", "$", ",", "/", "?", "%", "#", "[", "]"]
 
 user_scores = {}
 prog_scores = {}
@@ -41,9 +44,9 @@ def get_default_games():
     soup = BeautifulSoup(req.text, 'html.parser')
     names = soup.find_all(name='a', attrs={'class': 'title'})
     names = [g.text for g in names]
-    noDupGames = []
-    [noDupGames.append(a) for a in names if a not in noDupGames]
-    games += noDupGames
+    no_dup_games = []
+    [no_dup_games.append(a) for a in names if a not in no_dup_games]
+    games += no_dup_games
 
 
 async def platform_data(session: aiohttp.client.ClientSession, platform_url: str):
@@ -66,7 +69,7 @@ async def platform_data(session: aiohttp.client.ClientSession, platform_url: str
                 sum_reviews = str(sum_reviews).split('user-reviews">')[1].split("Ratings")[0]
                 reviews.append((platform_url, sum_reviews))
     except Exception as e:
-        print(platform_url, e.with_traceback())
+        print(platform_url, e)
 
 
 reviews = []
@@ -108,7 +111,8 @@ async def get_platforms(game: str, non_specific: bool = False) -> list:
     :return: the urls of the platforms
     :rtype: list
     """
-    req = requests.get(f'https://www.metacritic.com/search/game/{game}/results?sort=relevancy', headers=HEADERS_GET)
+    query_game = re.sub(' +', ' ', "".join([c for c in game if c not in reserved_utl_chars]))
+    req = requests.get(f'https://www.metacritic.com/search/game/{query_game}/results?sort=relevancy', headers=HEADERS_GET)
     soup = BeautifulSoup(req.text, 'html.parser')
     consoles = soup.find_all(name='a', href=True)
     consoles = [str(con) for con in consoles]
@@ -256,11 +260,13 @@ def user_games_rating():
     global user_scores, calculated
     done = 0
     for game in games:
-        rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play) ")
-        while (rating != '' and not rating.isnumeric()) or (
+        rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play, q to quit) ").lower()
+        while (rating != "q" and rating != '' and not rating.isnumeric()) or (
                 rating.isnumeric() and (int(rating) < 1 or int(rating) > 5)):
             print("THIS ISN'T A VALID ANSWER")
             rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play) ")
+        if rating == 'q':
+            break
         if rating != '':
             user_scores[game] = rating
             if game in prog_scores:
@@ -288,10 +294,10 @@ def add_manually():
         rating = input("how much do u rate the game from 1 to 5\n")
 
     while game != '':
-        urls = asyncio.get_event_loop().run_until_complete(get_platforms(game, True))
+        urls = asyncio.get_running_loop().run_until_complete(get_platforms(game, True))
         ans = 'n'
         i = 0
-        while ans == 'n':
+        while ans != 'y':
             if i > len(urls) - 1:
                 print("we couldn't find the game you wanted")
                 break
@@ -304,7 +310,13 @@ def add_manually():
             soup = BeautifulSoup(req.text, 'html.parser')
             name = soup.find(name="div", attrs={'class': 'product_title'}).a.text.strip()
             user_scores[name] = rating
+            if game in prog_scores:
+                del prog_scores[game]
+            if game in games:
+                games.remove(game)
             calculated = False
+        else:
+            print(ans)
         game = input("whats the name of the game? ENTER to main menu\n")
     clear_score()
 
@@ -329,7 +341,7 @@ def manager():
 
         elif todo == "recommended games" or todo == "r":
             if not calculated:
-                asyncio.get_event_loop().run_until_complete(prog_games_rating())
+                asyncio.get_running_loop().run_until_complete(prog_games_rating())
             print(prog_scores)
             input("continue? press Enter")
 
@@ -344,7 +356,8 @@ def manager():
         saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
                           games=games, calculated=calculated)
         print(
-            "\n" * 100 + "\t\tyour options are: 'score more games' , 'recommended games' , 'exit' and 'delete' to "
+            "\n" * 100 + "\t\tyour options are: 'score more games' , 'recommended games' ,'manual' to add games "
+                         "manually 'exit' and 'delete' to "
                          "delete your preferences and then exit\n\n\n\n ")
 
 
