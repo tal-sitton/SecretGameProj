@@ -286,15 +286,15 @@ def add_manually():
     global user_scores, calculated
     session = requests.Session()
     game = input("whats the name of the game? ENTER to main menu\n")
-    rating = input("how much do u rate the game from 1 to 5\n")
-
-    while (rating != '' and not rating.isnumeric()) or (
-            rating.isnumeric() and (int(rating) < 1 or int(rating) > 5)):
-        print("INVALID INPUT")
+    while game != '':
         rating = input("how much do u rate the game from 1 to 5\n")
 
-    while game != '':
-        urls = asyncio.get_running_loop().run_until_complete(get_platforms(game, True))
+        while (rating != '' and not rating.isnumeric()) or (
+                rating.isnumeric() and (int(rating) < 1 or int(rating) > 5)):
+            print("INVALID INPUT")
+            rating = input("how much do u rate the game from 1 to 5\n")
+
+        urls = asyncio.get_event_loop().run_until_complete(get_platforms(game, True))
         ans = 'n'
         i = 0
         while ans != 'y':
@@ -341,7 +341,7 @@ def manager():
 
         elif todo == "recommended games" or todo == "r":
             if not calculated:
-                asyncio.get_running_loop().run_until_complete(prog_games_rating())
+                asyncio.get_event_loop().run_until_complete(prog_games_rating())
             print(prog_scores)
             input("continue? press Enter")
 
