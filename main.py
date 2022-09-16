@@ -341,7 +341,8 @@ def manager():
     print(manager_msg)
 
     todo = ''
-
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     while todo != 'exit' and todo != 'e':
         todo = input("what do you want to do? ")
 
@@ -350,8 +351,6 @@ def manager():
 
         elif todo == "recommended games" or todo == "r":
             if not calculated:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
                 loop.run_until_complete(prog_games_rating())
             print(prog_scores)
             input("continue? press Enter")
