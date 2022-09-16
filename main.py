@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import time
 
 import aiohttp
 import requests
@@ -9,7 +10,14 @@ from bs4 import BeautifulSoup
 import saveManager
 
 HEADERS_GET = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36'}
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
+}
+
+HEADERS_POST = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
+    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "x-requested-with": "XMLHttpRequest"
+}
 
 reserved_utl_chars = ["!", "*" "(", ")", ";", ":", "@", "&", "=", "+", "$", ",", "/", "?", "%", "#", "[", "]"]
 
@@ -101,35 +109,34 @@ async def most_viewed_platform(platforms_urls: []):
 platform = None
 
 
-async def get_platforms(game: str, non_specific: bool = False) -> list:
+async def get_platforms(game: str, session: requests.Session = requests.Session(), specific_name: bool = False) -> list:
     """
     Gets all the platforms of the game
     :param game: the name of the game
     :type game: str
-    :param non_specific: whether the game could be not a perfect match to the given name
-    :type non_specific: bool
+    :param session: the session used to make requests
+    :type session: requests.Sessions
     :return: the urls of the platforms
     :rtype: list
     """
-    query_game = re.sub(' +', ' ', "".join([c for c in game if c not in reserved_utl_chars]))
-    req = requests.get(f'https://www.metacritic.com/search/game/{query_game}/results?sort=relevancy', headers=HEADERS_GET)
-    soup = BeautifulSoup(req.text, 'html.parser')
-    consoles = soup.find_all(name='a', href=True)
-    consoles = [str(con) for con in consoles]
+    global platform
+    payload = f"search_term={game}&search_each=true"
+    url = "https://www.metacritic.com/autosearch"
+    response = session.request("POST", url, data=payload, headers=HEADERS_POST)
 
-    urls = []
-    for i in consoles:
-        n = True
-        if 'href="/game/' in i and "div" not in i and 'section' not in i:
-            url = i.split('<a href="')[1].split('">')[0]
-            if not non_specific:
-                for word in url.split('/')[3].replace("-", ' ').lower():
-                    if word not in game.lower():
-                        n = False
-                        break
-            if n:
-                urls.append('https://www.metacritic.com' + url)
+    game_has_numbers = has_numbers(game)
+    urls = [result.get("url") for result in response.json().get("autoComplete").get("results") if
+            (result.get("name") == game and specific_name) or (
+                    not specific_name and has_numbers(result.get("name")) is game_has_numbers)]
+    if urls:
+        platform = urls[0]
+    else:
+        platform = None
     return urls
+
+
+def has_numbers(in_string: str):
+    return any(char.isdigit() for char in in_string)
 
 
 async def get_reviewers_to_check() -> list:
@@ -145,7 +152,7 @@ async def get_reviewers_to_check() -> list:
         if game not in got_peoples_score:
             print(f"checking {game}")
             got_peoples_score.append(game)
-            await most_viewed_platform(await get_platforms(game))
+            await get_platforms(game, session, True)
             origin_url = platform
             if origin_url is None:
                 print(f"COULDN'T FIND {game} IN METACRITIC")
@@ -294,7 +301,9 @@ def add_manually():
             print("INVALID INPUT")
             rating = input("how much do u rate the game from 1 to 5\n")
 
-        urls = asyncio.get_event_loop().run_until_complete(get_platforms(game, True))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        urls = loop.run_until_complete(get_platforms(game, session))
         ans = 'n'
         i = 0
         while ans != 'y':
@@ -341,7 +350,9 @@ def manager():
 
         elif todo == "recommended games" or todo == "r":
             if not calculated:
-                asyncio.get_event_loop().run_until_complete(prog_games_rating())
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(prog_games_rating())
             print(prog_scores)
             input("continue? press Enter")
 
