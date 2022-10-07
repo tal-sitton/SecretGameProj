@@ -19,8 +19,6 @@ HEADERS_POST = {
     "x-requested-with": "XMLHttpRequest"
 }
 
-reserved_utl_chars = ["!", "*" "(", ")", ";", ":", "@", "&", "=", "+", "$", ",", "/", "?", "%", "#", "[", "]"]
-
 user_scores = {}
 prog_scores = {}
 got_peoples_score = []
