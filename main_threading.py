@@ -1,26 +1,27 @@
 import os
 import re
 import threading
+import time
+import traceback
+from collections import defaultdict
 
 import requests
 from bs4 import BeautifulSoup
 
 import saveManager
 
+requests.packages.urllib3.util.connection.HAS_IPV6 = False
 reserved_utl_chars = ["!", "*" "(", ")", ";", ":", "@", "&", "=", "+", "$", ",", "/", "?", "%", "#", "[", "]"]
 
-session = requests.Session()
-session.headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
-}
+global session
 
 user_scores = {}  # the games the user already scored
 prog_scores = {}  # the games the program scored
 got_peoples_score = []  # the games the program learned from
 games = []  # the games the user has to score
 calculated = False  # whether the program already scored all the games
-NEEDED_REVIEWS = 40  # how many reviewers to look for every game
-MAX_PAGES = 15  # the maximum amount of pages to look for reviewers
+NEEDED_REVIEWS = 20  # how many reviewers to look for every game
+MAX_PAGES = 7  # the maximum amount of pages to look for reviewers
 
 
 def assign_from_json(data):
@@ -42,14 +43,13 @@ def get_default_games():
     """
     global games
     req = session.get("https://www.metacritic.com/browse/games/score/metascore/all/all/filtered")
-    print(req)
     soup = BeautifulSoup(req.text, 'html.parser')
     names = soup.find_all(name='a', attrs={'class': 'title'})
     names = [g.text for g in names]
     games += list(dict.fromkeys(names))
 
 
-def platform_data(platform_url: str):
+def get_platform_data(platform_url: str, game: str):
     """
     search how many reviews a game has in a specific platform
     :param platform_url: the url of the platform to check
@@ -64,37 +64,36 @@ def platform_data(platform_url: str):
             sum_reviews = sum_reviews[1]
             if len(str(sum_reviews).split('user-reviews">')) > 1:
                 sum_reviews = str(sum_reviews).split('user-reviews">')[1].split("Ratings")[0]
-                return platforms_data.append((platform_url, sum_reviews))
+                platforms_data[game].append((platform_url, sum_reviews))
     except Exception as e:
-        print(platform_url, e)
+        print(e)
 
 
-platforms_data = []
+platforms_data = defaultdict(list)
 
 
-def most_viewed_platform(platforms_urls: []) -> str:
+def most_viewed_platform(platforms_urls: [], game: str) -> str:
     """
     gets the most viewed platform from the given list
     :param platforms_urls: all the platform of a specific game
     :return the url of the most viewed platform
     """
-    platforms_data.clear()
     threads = []
     for url in platforms_urls:
-        t = threading.Thread(target=platform_data, args=[url])
+        t = threading.Thread(target=get_platform_data, args=[url, game])
         t.start()
         threads.append(t)
     while [t for t in threads if t.is_alive()]:
         pass
-    platforms_data.sort(key=lambda x: -int(x[1]))
+    platforms_data[game].sort(key=lambda x: -int(x[1]))
     try:
-        return platforms_data[0][0]
+        return platforms_data[game][0][0]
     except IndexError:
-        print("THE GAME DOESN'T HAVE ANY REVIEW IN ANY CONSOLE IN METACRITIC")
+        print(f"{game} DOESN'T HAVE ANY REVIEW IN ANY CONSOLE IN METACRITIC")
         return None
 
 
-def get_platforms(game: str, non_specific: bool = False) -> list:
+def get_platforms(game: str, non_specific: bool) -> list:
     """
     gets all the platforms of the game
     :param game: the name of the game
@@ -107,20 +106,14 @@ def get_platforms(game: str, non_specific: bool = False) -> list:
     req = session.get(f'https://www.metacritic.com/search/game/{query_game}/results?sort=relevancy')
     soup = BeautifulSoup(req.text, 'html.parser')
     consoles = soup.find_all(name='a', href=True)
-    consoles = [str(con) for con in consoles]
 
     urls = []
-    for i in consoles:
+    for con in consoles:
+        i = str(con)
         n = True
         if 'href="/game/' in i and "div" not in i and 'section' not in i:
             url = i.split('<a href="')[1].split('">')[0]
-            if not non_specific:
-                for word in url.split('/')[3].replace("-",
-                                                      ' ').lower():  # TODO change to check the NAME OF THE GAME, not the URL
-                    if word not in game.lower():
-                        n = False
-                        break
-            if n:
+            if non_specific or con.text.strip().lower() == game.lower():
                 urls.append('https://www.metacritic.com' + url)
     return urls
 
@@ -135,11 +128,16 @@ def get_reviewers_for_game(game: str):
     """
     print(f"checking {game}")
     got_peoples_score.append(game)
-    origin_url = most_viewed_platform(get_platforms(game, True))
-    if origin_url is None:
+    origin_url = get_platforms(game, False)
+    if not origin_url:
         print(f"COULDN'T FIND {game} IN METACRITIC")
         return []
-    origin_url += r"/user-reviews?sort-by=most-helpful&num_items=100"  # TODO check if can increase 100 to 500
+    elif len(origin_url) > 1:
+        origin_url = most_viewed_platform(origin_url, game)
+    else:
+        origin_url = origin_url[0]
+
+    origin_url += r"/user-reviews?sort-by=most-helpful&num_items=100"
     url = origin_url
     reviewers_count = 0
     page = 0
@@ -176,7 +174,6 @@ def get_reviewers_to_check() -> list:
     gets the reviewers to check and learn from
     :return: all the reviewers the program has to check
     """
-    print("started get_reviewers_to_check")
     threads = []
     for game in user_scores:
         if game not in got_peoples_score:
@@ -185,6 +182,7 @@ def get_reviewers_to_check() -> list:
             threads.append(t)
     while [t for t in threads if t.is_alive()]:
         pass
+    platforms_data.clear()
     return url_of_reviewers
 
 
@@ -201,25 +199,29 @@ def rate(reviewer: str, length: int):
     """
     global index
 
-    res = session.get(reviewer)
-    reviews = [str(i) for i in BeautifulSoup(res.text, 'html.parser').find_all(attrs={'class': 'review_stats'})]
-    for review in reviews:
-        grade = int(BeautifulSoup(review, 'html.parser').find(attrs={'class': 'review_score'}).text)
-        game_name = BeautifulSoup(review, 'html.parser').find(attrs={'class': 'product_title'}).text
-        if game_name not in games:
-            games.insert(0, game_name)
-        if grade >= 9:
-            if prog_scores.get(game_name):
-                prog_scores[game_name] = prog_scores.get(game_name) + 1
-            else:
-                prog_scores[game_name] = 1
-        elif grade <= 2:
-            if prog_scores.get(game_name):
-                prog_scores[game_name] = prog_scores.get(game_name) - 1
-            else:
-                prog_scores[game_name] = -1
-    print(str(index + 1) + "/" + str(length))
-    index += 1
+    try:
+        res = session.get(reviewer)
+        reviews = [str(i) for i in BeautifulSoup(res.text, 'html.parser').find_all(attrs={'class': 'review_stats'})]
+        for review in reviews:
+            grade = int(BeautifulSoup(review, 'html.parser').find(attrs={'class': 'review_score'}).text)
+            game_name = BeautifulSoup(review, 'html.parser').find(attrs={'class': 'product_title'}).text
+            if game_name not in games:
+                games.insert(0, game_name)
+            if grade >= 9:
+                if prog_scores.get(game_name):
+                    prog_scores[game_name] = prog_scores.get(game_name) + 1
+                else:
+                    prog_scores[game_name] = 1
+            elif grade <= 2:
+                if prog_scores.get(game_name):
+                    prog_scores[game_name] = prog_scores.get(game_name) - 1
+                else:
+                    prog_scores[game_name] = -1
+        print(str(index + 1) + "/" + str(length))
+        index += 1
+    except Exception as e:
+        print(e)
+        print("ERROR IN RATE")
 
 
 def prog_games_rating():
@@ -233,10 +235,12 @@ def prog_games_rating():
     threads = []
     for reviewer in reviewers_urls:
         t = threading.Thread(target=rate, args=[reviewer, len(reviewers_urls)])
+        time.sleep(0.03)
         t.start()
         threads.append(t)
     while [t for t in threads if t.is_alive()]:
         pass
+    url_of_reviewers.clear()
 
     clear_score()
     calculated = True
@@ -269,7 +273,7 @@ def add_manually():
             print("INVALID INPUT")
             rating = input("how much do u rate the game from 1 to 5\n")
 
-        urls = get_platforms(game)
+        urls = get_platforms(game, True)
         ans = 'n'
         i = 0
         while ans != 'y':
@@ -280,15 +284,10 @@ def add_manually():
             i += 1
         if ans == 'y':
             i -= 1
-            print(urls[i])
             req = session.get(urls[i])
             soup = BeautifulSoup(req.text, 'html.parser')
             name = soup.find(name="div", attrs={'class': 'product_title'}).a.text.strip()
             user_scores[name] = rating
-            # if game in prog_scores: THE clear_score() IS DOING IT
-            #     del prog_scores[game]
-            # if game in games:
-            #     games.remove(game)
             calculated = False
         else:
             print(ans)
@@ -312,9 +311,6 @@ def user_games_rating():
             break
         if rating != '':
             user_scores[game] = rating
-            # if game in prog_scores: THE clear_score() IS DOING IT
-            #     del prog_scores[game]
-            # games.remove(game)
             done += 1
         if done == 5:
             break
@@ -359,3 +355,43 @@ def manager():
             "\n" * 100 + "\t\tyour options are: 'score more games' , 'recommended games' ,'manual' to add games "
                          "manually 'exit' and 'delete' to "
                          "delete your preferences and then exit\n\n\n\n ")
+
+
+def main():
+    start_msg = """\tHello, This Program will help find whats your next game will be.
+    you just have to answer some questions about some games, and I will calculate whats your next game should be
+    Just know that the more questions you answer, the more accurate my calculation will be
+    """
+    global session
+    print(start_msg)
+    data = saveManager.read()
+
+    session = requests.Session()
+    session.headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/74.0.3729.169 Safari/537.36 '
+    }
+
+    if data is None:
+        get_default_games()
+        user_games_rating()
+        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
+                          games=games, calculated=calculated)
+
+    else:
+        try:
+            assign_from_json(data)
+        except Exception as e:
+            print(
+                f"There was a PROBLEM with reading the saved data... sorry about that. plz start over. ERROR= {type(e)} : {e}")
+            os.remove(saveManager.data)
+            get_default_games()
+            user_games_rating()
+            saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
+                              games=games, calculated=calculated)
+
+    manager()
+
+
+if __name__ == '__main__':
+    main()
