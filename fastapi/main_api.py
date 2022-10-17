@@ -1,14 +1,13 @@
-import os
+import json
 import re
 import threading
 import time
-import traceback
 from collections import defaultdict
 
 import requests
 from bs4 import BeautifulSoup
 
-import saveManager
+import sql_handler
 
 requests.packages.urllib3.util.connection.HAS_IPV6 = False
 reserved_utl_chars = ["!", "*" "(", ")", ";", ":", "@", "&", "=", "+", "$", ",", "/", "?", "%", "#", "[", "]"]
@@ -20,33 +19,43 @@ prog_scores = {}  # the games the program scored
 got_peoples_score = []  # the games the program learned from
 games = []  # the games the user has to score
 calculated = False  # whether the program already scored all the games
+calculating = False  # whether the program is currently scoring the games
 NEEDED_REVIEWS = 20  # how many reviewers to look for every game
 MAX_PAGES = 7  # the maximum amount of pages to look for reviewers
+prev_calc = 0  # the previews time the scores were calculated
 
 
-def assign_from_json(data):
+def assign_from_json(data: str):
     """
     assigns the data from jsom file to the variables
     :param data: data from the json
     """
-    global user_scores, prog_scores, got_peoples_score, games, calculated
+    data = json.loads(data)
+    global user_scores, prog_scores, got_peoples_score, games, calculated, calculating, prev_calc
     user_scores = data['user_scores']
     prog_scores = data['prog_scores']
     got_peoples_score = data['got_peoples_score']
     games = data['games']
     calculated = data['calculated']
+    calculating = data['calculating']
+    prev_calc = data['prev_calc']
 
 
-def get_default_games():
+def dump_to_json() -> str:
     """
-    gets the best games from Metacritic.com
+    dumps the variables to json
+    :return: the json data
     """
-    global games
-    req = session.get("https://www.metacritic.com/browse/games/score/metascore/all/all/filtered")
-    soup = BeautifulSoup(req.text, 'html.parser')
-    names = soup.find_all(name='a', attrs={'class': 'title'})
-    names = [g.text for g in names]
-    games += list(dict.fromkeys(names))
+    data = {
+        "user_scores": user_scores,
+        "prog_scores": prog_scores,
+        "got_peoples_score": got_peoples_score,
+        "games": games,
+        "calculated": calculated,
+        "calculating": calculating,
+        "prev_calc": prev_calc
+    }
+    return json.dumps(data)
 
 
 def get_platform_data(platform_url: str, game: str):
@@ -93,7 +102,7 @@ def most_viewed_platform(platforms_urls: [], game: str) -> str:
         return None
 
 
-def get_platforms(game: str, non_specific: bool) -> list:
+def get_platforms(game: str, non_specific: bool) -> [str]:
     """
     gets all the platforms of the game
     :param game: the name of the game
@@ -103,7 +112,9 @@ def get_platforms(game: str, non_specific: bool) -> list:
     :return: the urls of the platforms
     """
     query_game = re.sub(' +', ' ', "".join([c for c in game if c not in reserved_utl_chars]))
-    req = session.get(f'https://www.metacritic.com/search/game/{query_game}/results?sort=relevancy')
+    url = f'https://www.metacritic.com/search/game/{query_game}/results?sort=relevancy'
+    print(url)
+    req = session.get(url)
     soup = BeautifulSoup(req.text, 'html.parser')
     consoles = soup.find_all(name='a', href=True)
 
@@ -127,7 +138,6 @@ def get_reviewers_for_game(game: str):
     :param game: the name of the game to check
     """
     print(f"checking {game}")
-    got_peoples_score.append(game)
     origin_url = get_platforms(game, False)
     if not origin_url:
         print(f"COULDN'T FIND {game} IN METACRITIC")
@@ -166,6 +176,7 @@ def get_reviewers_for_game(game: str):
             req = session.get(url)
             soup = BeautifulSoup(req.text, 'html.parser')
             reviews = soup.find_all(attrs={'class': 'review user_review'})
+    got_peoples_score.append(game)
     print({game}, {reviewers_count}, {origin_url})
 
 
@@ -246,6 +257,30 @@ def prog_games_rating():
     calculated = True
 
 
+def calculate(username: str):
+    global calculating
+    if not calculated:
+        sql = sql_handler.SQLHandler()
+        calculating = True
+        sql.update("json_data", dump_to_json(), "username", username)
+
+        threading.Thread(target=calculation_thread, args=[username]).start()
+
+
+def calculation_thread(username: str):
+    global calculating, prev_calc, user_scores, session
+    sql = sql_handler.SQLHandler()
+    prog_games_rating()
+    calculating = False
+    prev_calc = time.time()
+
+    data = json.loads(sql.get_data("json_data", ("username", username), str)[0])
+    user_scores = data["user_scores"]
+    clear_score()
+    sql.update("json_data", dump_to_json(), "username", username)
+    print("done calculating")
+
+
 def clear_score():
     """
     Clears and organize the lists
@@ -259,140 +294,17 @@ def clear_score():
     prog_scores = {k: v for k, v in sorted(prog_scores.items(), key=lambda item: -item[1]) if v != 0}
 
 
-def add_manually():
-    """
-    adding a game manually - the user gives the name of the game and his rating
-    """
-    global user_scores, calculated
-    game = input("whats the name of the game? ENTER to main menu\n")
-    while game != '':
-        rating = input("how much do you rate the game from 1 to 5\n")
+def add_manual(username: str, url: str, rating: str):
+    global calculated, user_scores, session
+    sql = sql_handler.SQLHandler()
 
-        while (rating != '' and not rating.isnumeric()) or (
-                rating.isnumeric() and (int(rating) < 1 or int(rating) > 5)):
-            print("INVALID INPUT")
-            rating = input("how much do u rate the game from 1 to 5\n")
-
-        urls = get_platforms(game, True)
-        ans = 'n'
-        i = 0
-        while ans != 'y':
-            if i > len(urls) - 1:
-                print("we couldn't find the game you wanted")
-                break
-            ans = input("is this right? " + urls[i] + " ")
-            i += 1
-        if ans == 'y':
-            i -= 1
-            req = session.get(urls[i])
-            soup = BeautifulSoup(req.text, 'html.parser')
-            name = soup.find(name="div", attrs={'class': 'product_title'}).a.text.strip()
-            user_scores[name] = rating
-            calculated = False
-        else:
-            print(ans)
-        game = input("whats the name of the game? ENTER to main menu\n")
-    clear_score()
-
-
-def user_games_rating():
-    """
-    manages all the user interaction: asking the user for his opinion about every game
-    """
-    global user_scores, calculated
-    done = 0
-    for game in games:
-        rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play, q to quit) ").lower()
-        while (rating != "q" and rating != '' and not rating.isnumeric()) or (
-                rating.isnumeric() and (int(rating) < 1 or int(rating) > 5)):
-            print("THIS ISN'T A VALID ANSWER")
-            rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play) q to quit").lower()
-        if rating == 'q':
-            break
-        if rating != '':
-            user_scores[game] = rating
-            done += 1
-        games.remove(game)
-        if done == 5:
-            break
+    req = session.get(url)
+    with open ("../m.html", "w") as f:
+      f.write(req.text)
+    print("url=",url)
+    soup = BeautifulSoup(req.text, 'html.parser')
+    name = soup.find(name="div", attrs={'class': 'product_title'}).a.text.strip()
+    user_scores[name] = rating
     calculated = False
     clear_score()
-
-
-def manager():
-    """
-    Managing everything
-    """
-    manager_msg = "\n" * 100 + "\t\tNice! now that we all set up we can choose what you want to do! you can do couple " \
-                               "of things like:\n\t\t'score more games' , 'recommended games' , 'manual' to add games " \
-                               "manually,\n\t\t'exit' , and " \
-                               "'delete' to delete your preferences and then exit\n\n\n\n "
-    print(manager_msg)
-
-    todo = ''
-    while todo != 'exit' and todo != 'e':
-        todo = input("what do you want to do? ")
-
-        if todo == "score more games" or todo == "s":
-            user_games_rating()
-
-        elif todo == "recommended games" or todo == "r":
-            if not calculated:
-                prog_games_rating()
-            print(prog_scores)
-            input("continue? press Enter")
-
-        elif todo == "manual" or todo == "m":
-            add_manually()
-
-        elif todo == "delete" or todo == "d":
-            if os.path.exists(saveManager.data):
-                os.remove(saveManager.data)
-            break
-
-        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
-                          games=games, calculated=calculated)
-        print(
-            "\n" * 100 + "\t\tyour options are: 'score more games' , 'recommended games' ,'manual' to add games "
-                         "manually 'exit' and 'delete' to "
-                         "delete your preferences and then exit\n\n\n\n ")
-
-
-def main():
-    start_msg = """\tHello, This Program will help find whats your next game will be.
-    you just have to answer some questions about some games, and I will calculate whats your next game should be
-    Just know that the more questions you answer, the more accurate my calculation will be
-    """
-    global session
-    print(start_msg)
-    data = saveManager.read()
-
-    session = requests.Session()
-    session.headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/74.0.3729.169 Safari/537.36 '
-    }
-
-    if data is None:
-        get_default_games()
-        user_games_rating()
-        saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
-                          games=games, calculated=calculated)
-
-    else:
-        try:
-            assign_from_json(data)
-        except Exception as e:
-            print(
-                f"There was a PROBLEM with reading the saved data... sorry about that. plz start over. ERROR= {type(e)} : {e}")
-            os.remove(saveManager.data)
-            get_default_games()
-            user_games_rating()
-            saveManager.write(user_scores=user_scores, prog_scores=prog_scores, got_peoples_score=got_peoples_score,
-                              games=games, calculated=calculated)
-
-    manager()
-
-
-if __name__ == '__main__':
-    main()
+    sql.update("json_data", dump_to_json(), "username", username)
