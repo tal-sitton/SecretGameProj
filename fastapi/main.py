@@ -8,6 +8,7 @@ from fastapi import FastAPI
 import main_api as backend
 import sql_handler
 
+print("start")
 app = FastAPI()
 
 
@@ -72,8 +73,6 @@ def user_score(username: str, password: str, game: str, rating: str):
     }
     backend.session = s
     if login(username, password):
-        backend.assign_from_json(sql.get_data("json_data", ("username", username), str)[0])
-
         backend.assign_from_json(sql.get_data("json_data", ("username", username), str)[0])
         if rating.isnumeric():
             backend.user_scores[game] = rating
