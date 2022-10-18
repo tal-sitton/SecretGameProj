@@ -27,11 +27,7 @@ async def startup_event():
 
 @app.get("/")
 def ping():
-    sql = sql_handler.SQLHandler()
-    return {
-        "usernames: ": sql.get_data("username"),
-        "json_data:": sql.get_data("json_data")
-    }
+    return "PING"
 
 
 @app.get("/login")
