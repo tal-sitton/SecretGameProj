@@ -46,7 +46,8 @@ def get_default_games():
     Gets the best games from Metacritic.com
     """
     global games
-    req = requests.get("https://www.metacritic.com/browse/games/score/metascore/all/all/filtered", headers=HEADERS_GET)
+    req = requests.get(
+        "https://www.metacritic.com/browse/games/score/metascore/all/all/filtered", headers=HEADERS_GET)
     soup = BeautifulSoup(req.text, 'html.parser')
     names = soup.find_all(name='a', attrs={'class': 'title'})
     names = [g.text for g in names]
@@ -72,7 +73,8 @@ async def platform_data(session: aiohttp.client.ClientSession, platform_url: str
         if "metascore_w user large game tbd" not in req:
             sum_reviews = sum_reviews[1]
             if len(str(sum_reviews).split('user-reviews">')) > 1:
-                sum_reviews = str(sum_reviews).split('user-reviews">')[1].split("Ratings")[0]
+                sum_reviews = str(sum_reviews).split(
+                    'user-reviews">')[1].split("Ratings")[0]
                 reviews.append((platform_url, sum_reviews))
     except Exception as e:
         print(platform_url, e)
@@ -125,7 +127,7 @@ async def get_platforms(game: str, session: requests.Session = requests.Session(
     game_has_numbers = has_numbers(game)
     urls = [result.get("url") for result in response.json().get("autoComplete").get("results") if
             (result.get("name") == game and specific_name) or (
-                    not specific_name and has_numbers(result.get("name")) is game_has_numbers)]
+        not specific_name and has_numbers(result.get("name")) is game_has_numbers)]
     if urls:
         platform = urls[0]
     else:
@@ -165,7 +167,8 @@ async def get_reviewers_to_check() -> list:
             reviews = soup.find_all(attrs={'class': 'review user_review'})
             while reviewers_count < NEEDED_REVIEWS and page < 15 and reviews:
                 for review in reviews:
-                    grade = BeautifulSoup(str(review), 'html.parser').find(attrs={'class': 'review_grade'}).text
+                    grade = BeautifulSoup(str(review), 'html.parser').find(
+                        attrs={'class': 'review_grade'}).text
                     if abs(int(user_scores[game]) * 2 - int(grade)) <= 2:
                         reviewer_link = [str(i) for i in
                                          BeautifulSoup(str(review), 'html.parser').find_all(href=True, name='a')]
@@ -183,7 +186,8 @@ async def get_reviewers_to_check() -> list:
                     url = origin_url + f'&page={page}'
                     req = session.get(url, headers=HEADERS_GET)
                     soup = BeautifulSoup(req.text, 'html.parser')
-                    reviews = soup.find_all(attrs={'class': 'review user_review'})
+                    reviews = soup.find_all(
+                        attrs={'class': 'review user_review'})
             print({game}, {reviewers_count}, {origin_url})
     session.close()
     return url_of_reviewers
@@ -205,10 +209,13 @@ async def rate(session: aiohttp.client.ClientSession, reviewer: str, length: int
     global index
     async with session.get(reviewer, headers=HEADERS_GET) as response:
         html = await response.text()
-        reviews = [str(i) for i in BeautifulSoup(html, 'html.parser').find_all(attrs={'class': 'review_stats'})]
+        reviews = [str(i) for i in BeautifulSoup(
+            html, 'html.parser').find_all(attrs={'class': 'review_stats'})]
     for review in reviews:
-        grade = int(BeautifulSoup(review, 'html.parser').find(attrs={'class': 'review_score'}).text)
-        game_name = BeautifulSoup(review, 'html.parser').find(attrs={'class': 'product_title'}).text
+        grade = int(BeautifulSoup(review, 'html.parser').find(
+            attrs={'class': 'review_score'}).text)
+        game_name = BeautifulSoup(review, 'html.parser').find(
+            attrs={'class': 'product_title'}).text
         if game_name not in games:
             games.insert(0, game_name)
         if grade >= 9:
@@ -237,7 +244,8 @@ async def prog_games_rating():
     async with aiohttp.ClientSession() as session:
         tasks = []
         for reviewer in reviewers_urls:
-            task = asyncio.ensure_future(rate(session, reviewer, len(reviewers_urls)))
+            task = asyncio.ensure_future(
+                rate(session, reviewer, len(reviewers_urls)))
             tasks.append(task)
         await asyncio.gather(*tasks)
 
@@ -255,7 +263,8 @@ def clear_score():
             del prog_scores[game]
         if game in games:
             games.remove(game)
-    prog_scores = {k: v for k, v in sorted(prog_scores.items(), key=lambda item: -item[1]) if v != 0}
+    prog_scores = {k: v for k, v in sorted(
+        prog_scores.items(), key=lambda item: -item[1]) if v != 0}
 
 
 def user_games_rating():
@@ -265,11 +274,13 @@ def user_games_rating():
     global user_scores, calculated
     done = 0
     for game in games:
-        rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play, q to quit) ").lower()
+        rating = input(
+            f"What do you think about {game} from 1 to 5? (ENTER if you didn't play, q to quit) ").lower()
         while (rating != "q" and rating != '' and not rating.isnumeric()) or (
                 rating.isnumeric() and (int(rating) < 1 or int(rating) > 5)):
             print("THIS ISN'T A VALID ANSWER")
-            rating = input(f"What do you think about {game} from 1 to 5? (ENTER if you didn't play) ")
+            rating = input(
+                f"What do you think about {game} from 1 to 5? (ENTER if you didn't play) ")
         if rating == 'q':
             break
         if rating != '':
@@ -315,7 +326,8 @@ def add_manually():
             print(urls[i])
             req = session.get(urls[i], headers=HEADERS_GET)
             soup = BeautifulSoup(req.text, 'html.parser')
-            name = soup.find(name="div", attrs={'class': 'product_title'}).a.text.strip()
+            name = soup.find(name="div", attrs={
+                             'class': 'product_title'}).a.text.strip()
             user_scores[name] = rating
             if game in prog_scores:
                 del prog_scores[game]
