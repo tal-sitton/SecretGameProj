@@ -1,3 +1,4 @@
+from http.client import HTTPException
 import json
 import time
 from urllib.parse import quote
@@ -8,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import main_api as backend
 import sql_handler
+
+from igdb_api import get_game_image
 
 print("start")
 app = FastAPI()
@@ -69,6 +72,14 @@ def to_rate(username: str = Body(), password: str = Body()):
         return backend.games
     else:
         return False
+
+
+@app.get("/image/{game}")
+def image(game: str):
+    try:
+        return get_game_image(game)
+    except ConnectionError:
+        raise HTTPException(status_code=404, detail="Image not found")
 
 
 @app.post("/user-score")
