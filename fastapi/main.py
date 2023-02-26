@@ -1,15 +1,29 @@
+from http.client import HTTPException
 import json
 import time
 from urllib.parse import quote
 
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
+from fastapi.middleware.cors import CORSMiddleware
 
 import main_api as backend
 import sql_handler
 
+from igdb_api import get_game_image
+
 print("start")
 app = FastAPI()
+
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
@@ -30,8 +44,8 @@ def ping():
     return "PING"
 
 
-@app.get("/login")
-def login(username: str, password: str):
+@app.post("/login")
+def login(username: str = Body(), password: str = Body()):
     sql = sql_handler.SQLHandler()
     if password in sql.get_data("password", ("username", username), str):
         return True
@@ -40,7 +54,7 @@ def login(username: str, password: str):
 
 
 @app.post("/signup")
-def signup(username: str, password: str):
+def signup(username: str = Body(), password: str = Body()):
     sql = sql_handler.SQLHandler()
     if username not in sql.get_data("username"):
         sql.insert(username, password)
@@ -49,18 +63,27 @@ def signup(username: str, password: str):
         return False
 
 
-@app.get("/to-rate")
-def to_rate(username: str, password: str):
+@app.post("/to-rate")
+def to_rate(username: str = Body(), password: str = Body()):
     sql = sql_handler.SQLHandler()
     if login(username, password):
-        backend.assign_from_json(sql.get_data("json_data", ("username", username), str)[0])
+        backend.assign_from_json(sql.get_data(
+            "json_data", ("username", username), str)[0])
         return backend.games
     else:
         return False
 
 
+@app.get("/image/{game}")
+def image(game: str):
+    try:
+        return get_game_image(game)
+    except ConnectionError:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+
 @app.post("/user-score")
-def user_score(username: str, password: str, game: str, rating: str):
+def user_score(username: str = Body(), password: str = Body(), game: str = Body(), rating: str = Body()):
     sql = sql_handler.SQLHandler()
     s = requests.Session()
     s.headers = {
@@ -69,7 +92,8 @@ def user_score(username: str, password: str, game: str, rating: str):
     }
     backend.session = s
     if login(username, password):
-        backend.assign_from_json(sql.get_data("json_data", ("username", username), str)[0])
+        backend.assign_from_json(sql.get_data(
+            "json_data", ("username", username), str)[0])
         if rating.isnumeric():
             backend.user_scores[game] = rating
         backend.games.remove(game)
@@ -81,8 +105,8 @@ def user_score(username: str, password: str, game: str, rating: str):
         return False
 
 
-@app.get("/recommended")
-def recommended(username: str, password: str):
+@app.post("/recommended")
+def recommended(username: str = Body(), password: str = Body()):
     sql = sql_handler.SQLHandler()
     s = requests.Session()
     s.headers = {
@@ -98,7 +122,8 @@ def recommended(username: str, password: str):
             print("started thread")
             backend.calculate(username)
 
-        print(len(backend.user_scores) == 0, backend.prev_calc + 5 * 60 < time.time(), not backend.calculating)
+        print(len(backend.user_scores) == 0, backend.prev_calc +
+              5 * 60 < time.time(), not backend.calculating)
         print(backend.prev_calc, time.time())
         arr = [backend.calculating]
         for i, (game, rating) in enumerate(backend.prog_scores.items()):
@@ -108,8 +133,8 @@ def recommended(username: str, password: str):
         return False
 
 
-@app.get("/manual")
-def manual(username: str, password: str, game: str):
+@app.post("/manual")
+def manual(username: str = Body(), password: str = Body(), game: str = Body()):
     s = requests.Session()
     s.headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -121,7 +146,7 @@ def manual(username: str, password: str, game: str):
 
 
 @app.post("/add-manual")
-def add_manual(username: str, password: str, url: str, rating: str):
+def add_manual(username: str = Body(), password: str = Body(), url: str = Body(), rating: str = Body()):
     s = requests.Session()
     s.headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
